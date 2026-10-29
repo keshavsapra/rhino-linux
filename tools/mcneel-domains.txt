@@ -1,0 +1,37 @@
+# McNeel and Rhino web services, resolved to 127.0.0.1 by
+# tools/block-mcneel-hosts.sh. One host name per line; subdomains do not
+# inherit, so every name is listed. Check dialogues in Rhino (update check,
+# statistics, licence validation, news panel, package manager, help lookups)
+# end in "connection refused" instead of loading.
+#
+# The launcher's offline mode (rhino-linux --offline) does not need this file:
+# there, no process of Rhino's can reach the network at all. This blocklist is
+# a system-wide fallback that also covers anything started outside the
+# namespace, and it is easy to audit for yourself in /etc/hosts.
+#
+# Sign-in and account:
+accounts.mcneel.com
+accounts.rhino3d.com
+# Licence validation and cloud services:
+api.mcneel.com
+compute.mcneel.com
+www.mcneel.com
+# Downloads, updates, resource files:
+files.mcneel.com
+downloads.rhino3d.com
+# Web sites, news panel, documentation lookups:
+rhino3d.com
+www.rhino3d.com
+beta.rhino3d.com
+# Support forum and community sites (the news panel reads from here too):
+discourse.mcneel.com
+grasshopper3d.com
+www.grasshopper3d.com
+# Purchase/payment:
+payments.mcneel.com
+store.mcneel.com
+# Package manager (food4Rhino plug-in index) and plug-in downloads:
+food4rhino.com
+www.food4rhino.com
+# Crash report uploads:
+caspar.mcneel.com

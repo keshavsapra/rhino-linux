@@ -615,6 +615,8 @@ class Window(Adw.ApplicationWindow):
         plugins.add(row)
         box.append(plugins)
 
+        box.append(self.offline_group())
+
         if ntsync_state() == "off":
             box.append(self.ntsync_group())
 
@@ -654,6 +656,54 @@ class Window(Adw.ApplicationWindow):
         row.connect("notify::selected", changed)
         group.add(row)
         return group
+
+    def offline_group(self):
+        """Rhino without any connection to McNeel: the switch writes
+        RHINO_OFFLINE into the launcher's config, so every launch — this
+        app's, the menu icons' and the command line's — runs in an isolated
+        network namespace whose only interface is the local loopback, without
+        the embedded browser, without update checks and statistics."""
+        group = Adw.PreferencesGroup(
+            title="Without the internet",
+            description="Keep Rhino from contacting McNeel's servers entirely: no update checks, no usage "
+                        "statistics, no licence check-ins, no crash uploads. Your licence key only needed "
+                        "the internet once, to be validated.")
+        switch = Adw.SwitchRow(title="Run Rhino offline",
+                               subtitle="Rhino starts in an isolated sandbox with no network access")
+        switch.set_active(read_config().get("RHINO_OFFLINE") == "1")
+
+        def toggled(row, _pspec):
+            on = row.get_active()
+            write_config("RHINO_OFFLINE", "1" if on else "0")
+            self.toast("Rhino runs with no network access at all from its next start" if on
+                       else "Rhino may use the network again from its next start")
+        switch.connect("notify::active", toggled)
+        group.add(switch)
+        what = Adw.ActionRow(title="What this does", subtitle="Everything inside Rhino is kept from reaching the network",
+                             activatable=True)
+        what.add_prefix(Gtk.Image(icon_name="security-high-symbolic"))
+        what.connect("activated", self.on_offline_info)
+        group.add(what)
+        return group
+
+    def on_offline_info(self, *_):
+        dialog = Adw.AlertDialog(
+            heading="How offline mode works",
+            body="Rhino, its Wine environment and everything Rhino starts run in an isolated sandbox whose only "
+                 "interface is your own machine (localhost). Nothing inside has a network connection at all — "
+                 "not just to McNeel, but to any host.\n\n"
+                 "Also switched off inside Rhino: the update check and usage statistics (Options > Updates and "
+                 "Statistics), and the embedded browser of HTML panels.\n\n"
+                 "Unaffected: modelling, Grasshopper, rendering, scripting, saving .3dm files — and plug-ins you "
+                 "installed from files. What does not work without the internet: the plug-in package manager, "
+                 "the news panel, help pages that load online and Cloud Zoo sign-in.\n\n"
+                 "A single-computer licence key was validated the first time Rhino started; it never needs the "
+                 "internet again. A Cloud Zoo licence (Rhino account) asks to revalidate about every two weeks. "
+                 "For one launch with the network — a plug-in install, a licence check-in — start Rhino from the "
+                 "terminal with rhino-linux --online.")
+        dialog.add_response("ok", "OK")
+        dialog.set_close_response("ok")
+        dialog.present(self)
 
     def versions_group(self, versions):
         """One row per installed Rhino, plus a row to add another version."""

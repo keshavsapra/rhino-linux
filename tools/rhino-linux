@@ -50,13 +50,24 @@ case "$(basename "$0")" in
     rhino-9) NAME_VERSION=9 ;;
 esac
 SELF="$0" ORIG_ARGS=("$@")
-STOP=0 FRESH=0
+STOP=0 FRESH=0 OFFLINE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) REQ_VERSION="${2:-}"; shift 2 ;;
         --version=*) REQ_VERSION="${1#--version=}"; shift ;;
         --fresh) FRESH=1; shift ;;
         --stop) STOP=1; shift ;;
+        --offline) OFFLINE=1; shift ;;
+        --online) OFFLINE=0; shift ;;
+        --set-offline)
+            case "${2:-}" in
+                0|1)
+                    rhino_config_set RHINO_OFFLINE "$2"
+                    OFFLINE="$2"
+                    echo "rhino-linux: offline mode is now $( [ "$2" = 1 ] && echo on || echo off ) by default." >&2
+                    shift 2 ;;
+                *) echo "error: --set-offline takes 0 (off) or 1 (on)" >&2; exit 1 ;;
+            esac ;;
         -h|--help)
             echo "Usage: rhino-linux [OPTIONS] [file.3dm ...]"
             echo ""
@@ -64,6 +75,11 @@ while [ $# -gt 0 ]; do
             echo "  -h, --help       Show this help message"
             echo "  --version N      Open Rhino N (7, 8 or 9); default: the newest installed"
             echo "  --fresh          Restart wineserver before launch (fixes Cloud Zoo port 1717)"
+            echo "  --offline        Start Rhino in an isolated namespace with no network access"
+            echo "  --online         Start Rhino with network access (one-off: activate a license"
+            echo "                   key, use the package manager); never touches McNeel otherwise"
+            echo "  --set-offline 1|0"
+            echo "                   Make offline mode the default for every launch (menu icons too)"
             echo "  --stop           Stop Rhino: the version given, or every installed version"
             echo ""
             echo "Installed: $(rhino_installed_versions | sed 's/^/Rhino /' | paste -sd, - | sed 's/,/, /g')"
@@ -85,6 +101,17 @@ if [ -z "$REQ_VERSION" ] && [ -n "$NAME_VERSION" ]; then
     fi
 fi
 case "$REQ_VERSION" in ""|7|8|9) ;; *) echo "error: unknown Rhino version '$REQ_VERSION' (7, 8 or 9)" >&2; exit 1 ;; esac
+
+# Network isolation (offline mode): explicit --offline/--online, then the user's
+# RHINO_OFFLINE setting, then the saved config. In offline mode the launcher
+# starts Rhino in a network namespace with no network interfaces at all: no
+# DNS, no sockets, nothing can reach McNeel or any other host on the internet.
+# Local loopback still exists (Rhino's port 1717 licence broker keeps working).
+# Run "rhino-linux --set-offline 1" once to make every launch isolated.
+if [ -z "$OFFLINE" ]; then
+    OFFLINE="${RHINO_OFFLINE:-$(rhino_config_get RHINO_OFFLINE)}"
+fi
+case "$OFFLINE" in ""|0|off|false) OFFLINE=0 ;; 1|on|true) OFFLINE=1 ;; *) OFFLINE=0 ;; esac
 
 # Prefix: an explicit one, the requested version's, else the newest installed.
 if [ -n "$ENV_PREFIX" ]; then
@@ -245,11 +272,11 @@ done
 ms="$WINEPREFIX/drive_c/Program Files (x86)/Microsoft"
 if [ "$RHINO_MAJOR" = 7 ]; then
     :  # Rhino 7 has no embedded browser
-elif [ "${RHINO_WEBVIEW2:-1}" = "1" ]; then
-    [ -d "$ms/EdgeWebView.disabled" ] && mv "$ms/EdgeWebView.disabled" "$ms/EdgeWebView"
-    [ -d "$ms/EdgeCore.disabled" ] && mv "$ms/EdgeCore.disabled" "$ms/EdgeCore"
-    unset WEBVIEW2_BROWSER_EXECUTABLE_FOLDER
-else
+elif [ "$OFFLINE" = 1 ] || [ "${RHINO_WEBVIEW2:-1}" != "1" ]; then
+    # Stub mode, also the offline lockdown: the stub has one job, to exit
+    # immediately, so no embedded Edge process ever runs: no browser network
+    # traffic, no OAuth sign-in pages, no WebView2 panels (they stay blank, as
+    # any network content would offline anyway).
     wv2stub="$WINEPREFIX/drive_c/wv2stub"
     if [ ! -f "$wv2stub/msedgewebview2.exe" ]; then
         mkdir -p "$wv2stub"
@@ -261,6 +288,10 @@ else
     export WEBVIEW2_BROWSER_EXECUTABLE_FOLDER="C:\\wv2stub"
     [ -d "$ms/EdgeWebView" ] && mv "$ms/EdgeWebView" "$ms/EdgeWebView.disabled"
     [ -d "$ms/EdgeCore" ] && mv "$ms/EdgeCore" "$ms/EdgeCore.disabled"
+else
+    [ -d "$ms/EdgeWebView.disabled" ] && mv "$ms/EdgeWebView.disabled" "$ms/EdgeWebView"
+    [ -d "$ms/EdgeCore.disabled" ] && mv "$ms/EdgeCore.disabled" "$ms/EdgeCore"
+    unset WEBVIEW2_BROWSER_EXECUTABLE_FOLDER
 fi
 
 export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="${WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:---no-sandbox --disable-features=Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider,CalculateNativeWinOcclusion,InterestFeedContentSuggestions,CertificateTransparencyComponentUpdater,AutofillServerCommunication,HeavyAdIntervention,RendererCodeIntegrity --disable-background-networking --disable-component-update --disable-domain-reliability --disable-sync --disable-client-side-phishing-detection --disable-default-apps --disable-hang-monitor --disable-prompt-on-repost --disable-breakpad --disable-renderer-backgrounding --disable-background-timer-throttling --no-first-run --no-default-browser-check --no-pings --enable-gpu-rasterization --enable-zero-copy --disk-cache-size=33554432}"
@@ -396,5 +427,39 @@ if ! grep -qF 'msedgewebview2.exe\\Direct3D]' "$WINEPREFIX/user.reg" 2>/dev/null
         /v renderer /d vulkan /f >/dev/null 2>&1 || true
 fi
 
+# App-level lockdown: turn off Rhino's checks for updates and its sending of
+# usage statistics (the code behind Options > Updates and Statistics), so that
+# nothing in Rhino even tries to phone home. Values per major version, from a
+# McNeel support answer on the Rhino developer forum.
+if [ "$OFFLINE" = 1 ]; then
+    for v in 7 8 9; do
+        WINEDEBUG=-all "$WINE_BIN" reg add "HKCU\\Software\\McNeel\\McNeelUpdate\\$v" \
+            /v Enabled /d False /t REG_SZ /f >/dev/null 2>&1 || true
+    done
+fi
+
 cd "$RHINO_DIR"
-exec "$WINE_BIN" "C:\\Program Files\\$RHINO_NAME\\System\\Rhino.exe" "${args[@]}"
+
+if [ "$OFFLINE" = 1 ]; then
+    # unshare --user --map-root-user --net: a user namespace whose network
+    # namespace has no interfaces except the (raised) loopback, so Rhino keeps
+    # its local licence broker on 127.0.0.1 while nothing can leave the
+    # machine: no DNS server, no default route, no sockets out.
+    if unshare --user --map-root-user --net true 2>/dev/null; then
+        unshare --user --map-root-user --net sh -c '
+            command -v ip >/dev/null 2>&1 && ip link set lo up 2>/dev/null || true
+            exec "$0" "$@"' "$WINE_BIN" "C:\\Program Files\\$RHINO_NAME\\System\\Rhino.exe" "${args[@]}"
+    elif [ "${RHINO_OFFLINE_FALLBACK:-0}" = "1" ]; then
+        echo "rhino-linux: warning: cannot create a network namespace; starting" \
+             "Rhino WITHOUT network isolation (failures allowed by RHINO_OFFLINE_FALLBACK=1)" >&2
+        exec "$WINE_BIN" "C:\\Program Files\\$RHINO_NAME\\System\\Rhino.exe" "${args[@]}"
+    else
+        echo "error: offline mode could not isolate the network with unshare." >&2
+        echo "       To still start Rhino (not isolated), run once with RHINO_OFFLINE_FALLBACK=1," >&2
+        echo "       or as a system-wide fallback add McNeel hosts entries with" >&2
+        echo "       sudo tools/block-mcneel-hosts.sh add   (see docs/offline.md)" >&2
+        exit 1
+    fi
+else
+    exec "$WINE_BIN" "C:\\Program Files\\$RHINO_NAME\\System\\Rhino.exe" "${args[@]}"
+fi
