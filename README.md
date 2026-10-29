@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/images/rhino-9-on-linux.png" alt="Rhino 9 running on Linux: shaded Perspective viewport rendered with DXVK, wireframe Top, Front and Right views" width="900">
+<img src="docs/images/rhino-8-city-on-linux.png" alt="Rhino 8 running on Linux: a 3D wireframe city model in the Perspective viewport, full toolbars and menus under the X11/Wine session, status bar showing OSnap, Grid Snap and CPlane coordinates" width="900">
 
 # Rhino on Linux
 
